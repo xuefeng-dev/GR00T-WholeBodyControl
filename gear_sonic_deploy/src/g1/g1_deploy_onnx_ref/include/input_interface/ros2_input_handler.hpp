@@ -29,7 +29,7 @@
  *
  *   base_height_command | Mode
  *   --------------------|------
- *   0.72 – 0.88         | WALK (or SLOW_WALK depending on locomotion_mode flag)
+ *   0.72 – 0.88         | SLOW_WALK / WALK / RUN (locomotion_mode 0 / 1 / 2)
  *   0.50 – 0.72         | SQUAT (static)
  *   0.10 – 0.50         | KNEEL (static)
  *
@@ -116,7 +116,7 @@ struct ControlGoalMsg {
     
     double base_height_command = 0.78;        ///< Desired base height (metres, valid range 0.1–0.88).
     bool toggle_policy_action = false;        ///< Edge-triggered toggle: maps to start/stop control.
-    int locomotion_mode = 0;                  ///< 0 = slow walk (custom speed), 1 = fast walk (default speed).
+    int locomotion_mode = 0;                  ///< 0 = slow walk, 1 = fast walk, 2 = run.
     
     /// Dex3 hand joint positions (7 DOF per hand).
     std::array<double, 7> left_hand_joint = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
@@ -389,16 +389,25 @@ public:
                 control_goal_buffer_.toggle_policy_action = false;
             }
             
-            // Handle locomotion_mode (direct state: 0 = slow walk, 1 = fast walk)
-            locomotion_mode_is_fast_ = (control_goal_buffer_.locomotion_mode == 1);
+            // Handle locomotion_mode (0 = slow walk, 1 = fast walk, 2 = run)
+            teleop_locomotion_mode_ = control_goal_buffer_.locomotion_mode;
             
             if constexpr (DEBUG_LOGGING) {
                 static int prev_locomotion_mode = -1;
                 if (prev_locomotion_mode != control_goal_buffer_.locomotion_mode) {
-                    if (locomotion_mode_is_fast_) {
-                        std::cout << "[ROS2 DEBUG] locomotion_mode: FAST WALK (default speed, mode 2)" << std::endl;
-                    } else {
-                        std::cout << "[ROS2 DEBUG] locomotion_mode: SLOW WALK (custom speed, mode 1)" << std::endl;
+                    switch (teleop_locomotion_mode_) {
+                        case 1:
+                            std::cout << "[ROS2 DEBUG] locomotion_mode: FAST WALK (mode 2)"
+                                      << std::endl;
+                            break;
+                        case 2:
+                            std::cout << "[ROS2 DEBUG] locomotion_mode: RUN (mode 3)"
+                                      << std::endl;
+                            break;
+                        default:
+                            std::cout << "[ROS2 DEBUG] locomotion_mode: SLOW WALK (mode 1)"
+                                      << std::endl;
+                            break;
                     }
                     prev_locomotion_mode = control_goal_buffer_.locomotion_mode;
                 }
@@ -812,12 +821,18 @@ public:
                         final_movement[1] = std::sin(planner_moving_direction);
                         final_movement[2] = 0.0f;
                         
-                        if (locomotion_mode_is_fast_) {
+                        if (teleop_locomotion_mode_ == 2) {
+                            // Run: scale speed from navigate magnitude (1.5–3.0 m/s)
+                            final_mode = static_cast<int>(LocomotionMode::RUN);
+                            const double run_mag =
+                                std::min(movement_mag, 1.0);
+                            final_speed = 1.5 + 1.5 * run_mag;
+                        } else if (teleop_locomotion_mode_ == 1) {
                             // Normal walk mode: default speed (-1)
                             final_mode = static_cast<int>(LocomotionMode::WALK);
                             final_speed = -1.0f;
                         } else {
-                            // Slow walk mode: speed varies by direction (faster forward/lateral, slower backward)
+                            // Slow walk mode: speed varies by direction
                             final_mode = static_cast<int>(LocomotionMode::SLOW_WALK);
                             final_speed = direction_speed;
                         }
@@ -927,7 +942,7 @@ private:
     // Control-toggle state
     // ------------------------------------------------------------------
     bool control_is_active_ = false;       ///< Tracks the toggle state for toggle_policy_action.
-    bool locomotion_mode_is_fast_ = false;  ///< false = SLOW_WALK (custom speed), true = WALK (default speed).
+    int teleop_locomotion_mode_ = 0;  ///< 0 = SLOW_WALK, 1 = WALK, 2 = RUN.
     
     // ------------------------------------------------------------------
     // Per-frame control flags (reset in update())
@@ -1334,7 +1349,7 @@ private:
      *    - right_hand_joint: double[7] (7 DOF joint positions for right hand)
      *    - base_height_command: double (desired base height)
      *    - toggle_policy_action: bool (toggle between start/stop control)
-     *    - locomotion_mode: int (0 = slow walk with custom speed, 1 = fast walk with default speed)
+     *    - locomotion_mode: int (0 = slow walk, 1 = fast walk, 2 = run)
      *    - ros_timestamp: double (ROS time in seconds for synchronization)
      *    - valid: bool (message validity flag)
      */

@@ -138,7 +138,7 @@ void PrintUsage() {
         << "Usage: test_ros2_control_publisher [options]\n"
         << "  --wait-sec SEC       Wait before publishing (default: 5)\n"
         << "  --settle-sec SEC     Pause after start pulse (default: 2)\n"
-        << "  --phase-sec SEC      Per walk/turn/idle phase (default: 5)\n"
+        << "  --phase-sec SEC      Per walk/turn/run/idle phase (default: 5)\n"
         << "  --skip-start-pulse   Do not send toggle (use g1_deploy ']' instead)\n"
         << "\n"
         << "toggle_policy_action is sent ONCE only (edge toggle).\n"
@@ -260,6 +260,7 @@ int main(int argc, char** argv) {
         {"slow_walk", {0.35, 0.0, 0.0}, 0, cfg.phase_sec},
         {"fast_walk_run", {0.50, 0.0, 0.0}, 1, cfg.phase_sec},
         {"turn_in_place", {0.0, 0.0, 0.80}, 1, cfg.phase_sec},
+        {"run", {0.70, 0.0, 0.0}, 2, cfg.phase_sec},
         {"idle", {0.0, 0.0, 0.0}, 1, cfg.phase_sec},
     };
 
