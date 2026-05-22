@@ -1,0 +1,1 @@
+bash ./gear_sonic_deploy/docker/run-ros2-dev.sh

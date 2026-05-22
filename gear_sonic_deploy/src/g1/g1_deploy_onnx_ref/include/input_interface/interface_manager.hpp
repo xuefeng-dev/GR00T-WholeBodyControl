@@ -265,9 +265,17 @@ class InterfaceManager : public InputInterface {
     /// Forward raw wireless-remote byte buffer to the internal Gamepad instance.
     /// Called by the Unitree SDK callback whenever new joystick data arrives.
     void UpdateGamepadRemoteData(const uint8_t* buff, size_t size) {
-      if (!gamepad_ || buff == nullptr || size == 0) { return; }
-      size_t copy_size = std::min<size_t>(size, sizeof(gamepad_->gamepad_data.buff));
-      std::memcpy(gamepad_->gamepad_data.buff, buff, copy_size);
+      if (buff == nullptr || size == 0) { return; }
+      if (gamepad_) {
+        size_t copy_size = std::min<size_t>(size, sizeof(gamepad_->gamepad_data.buff));
+        std::memcpy(gamepad_->gamepad_data.buff, buff, copy_size);
+      }
+#if HAS_ROS2
+      // ROS2 mode uses teleop for motion; still mirror remote for Select/A safety.
+      if (ros2_) {
+        ros2_->UpdateGamepadRemoteData(buff, size);
+      }
+#endif
     }
 
     /// Programmatically switch to a specific interface type.

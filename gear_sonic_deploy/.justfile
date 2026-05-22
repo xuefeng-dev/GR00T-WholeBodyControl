@@ -22,6 +22,7 @@ build *build_type='Release':
   @cd build && cmake -S .. -B . -DCMAKE_BUILD_TYPE={{build_type}} -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
   @echo "Building the project..."
   @cd build && cmake --build . -j{{CORES}}
+  @bash scripts/sync_compile_commands.sh
 
 # Run a package
 run *package='hello':

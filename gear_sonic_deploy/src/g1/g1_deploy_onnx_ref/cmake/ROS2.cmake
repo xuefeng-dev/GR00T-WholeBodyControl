@@ -97,20 +97,28 @@ message(STATUS "✅ ROS2 configuration: ${ROS2_LIB_COUNT} libraries discovered")
 # ROS2 Test Executable
 # =============================================================================
 
-set(TEST_EXECUTABLE_NAME test_ros2)
-add_executable(${TEST_EXECUTABLE_NAME} tests/test_ros2.cpp)
+function(add_ros2_test_executable target_name source_file)
+  add_executable(${target_name} ${source_file})
+  target_include_directories(${target_name} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include/)
+  target_include_directories(${target_name} PRIVATE ${ROS2_INCLUDE_DIRS})
+  if(MSGPACK_INCLUDE_DIRS)
+    target_include_directories(${target_name} PRIVATE ${MSGPACK_INCLUDE_DIRS})
+  endif()
+  target_link_libraries(${target_name} PRIVATE ${ROS2_LIBS} pthread)
+  target_compile_definitions(${target_name} PRIVATE HAS_ROS2=1)
+  set_target_properties(${target_name} PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_SOURCE_DIR}/target/release/"
+    OUTPUT_NAME ${target_name}
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+    CXX_EXTENSIONS OFF)
+endfunction()
 
-target_include_directories(${TEST_EXECUTABLE_NAME} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include/)
-target_include_directories(${TEST_EXECUTABLE_NAME} PRIVATE ${ROS2_INCLUDE_DIRS})
-target_link_libraries(${TEST_EXECUTABLE_NAME} PRIVATE ${ROS2_LIBS} pthread)
-target_compile_definitions(${TEST_EXECUTABLE_NAME} PRIVATE HAS_ROS2=1)
+add_ros2_test_executable(test_ros2 tests/test_ros2.cpp)
+add_ros2_test_executable(
+  test_ros2_control_publisher tests/test_ros2_control_publisher.cpp)
 
-set_target_properties(${TEST_EXECUTABLE_NAME} PROPERTIES 
-  RUNTIME_OUTPUT_DIRECTORY "${PROJECT_SOURCE_DIR}/target/release/"
-  OUTPUT_NAME ${TEST_EXECUTABLE_NAME}
-)
-
-message(STATUS "✅ ROS2 test executable configured")
+message(STATUS "✅ ROS2 test executables: test_ros2, test_ros2_control_publisher")
 
 # =============================================================================
 # Test Configuration Files

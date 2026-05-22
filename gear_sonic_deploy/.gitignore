@@ -2,6 +2,7 @@
 .github/
 
 build/
+compile_commands.json
 target/
 logs/
 *.trt

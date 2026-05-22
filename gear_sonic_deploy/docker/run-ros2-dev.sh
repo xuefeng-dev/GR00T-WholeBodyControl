@@ -211,7 +211,7 @@ if [ "$BUILD_CUDAGL" = true ]; then
 fi
 
 # Clean up any existing containers (including old names)
-docker rm -f g1-deploy-dev g1-ros2-dev g1-jetson-dev 2>/dev/null || true
+# docker rm -f g1-deploy-dev g1-ros2-dev g1-jetson-dev 2>/dev/null || true
 
 # Smart Docker image build - only rebuild if needed
 BUILD_IMAGE=false
@@ -359,7 +359,7 @@ else
 fi
 
 # Run the container with system-specific configuration
-docker run -it --rm \
+docker run -it \
     --name "$IMAGE_NAME" \
     --network host \
     $GPU_SETTINGS \

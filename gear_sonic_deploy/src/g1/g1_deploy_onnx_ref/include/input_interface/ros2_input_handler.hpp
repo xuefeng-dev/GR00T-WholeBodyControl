@@ -33,6 +33,19 @@
  *   0.50 – 0.72         | SQUAT (static)
  *   0.10 – 0.50         | KNEEL (static)
  *
+ * ## Wireless Remote (safety only)
+ *
+ * While teleop commands come from ROS 2, the Unitree wireless remote is still
+ * read from `LowState::wireless_remote` for **safety keys only** (sticks are
+ * ignored to avoid fighting `navigate_cmd`):
+ *
+ *   Button  | Action
+ *   --------|--------------------------------------------------
+ *   Select  | Full emergency stop (`operator_state.stop`)
+ *   A       | Planner halt (IDLE, zero movement; control keeps running)
+ *
+ * Populate the buffer via `UpdateGamepadRemoteData()` from the input thread.
+ *
  * ## Edge-Triggered Commands
  *
  * `toggle_policy_action` is accumulated with OR logic in the callback so that
@@ -71,8 +84,11 @@
 #include <msgpack.hpp>
 
 #include "input_interface.hpp"
+#include "gamepad.hpp"  // REMOTE_DATA_RX, Button (safety keys only)
 #include "../math_utils.hpp"
 #include "../policy_parameters.hpp"  // For isaaclab_to_mujoco and default_angles
+#include <algorithm>
+#include <cstring>
 
 /**
  * @brief Deserialized control-goal message received from the Python teleop script.
@@ -166,6 +182,8 @@ public:
             if constexpr (DEBUG_LOGGING) {
                 std::cout << "[ROS2 DEBUG] Subscribed to topic: ControlPolicy/upper_body_pose" << std::endl;
             }
+            std::cout << "[ROS2] Gamepad safety: Select=full stop, A=planner halt "
+                         "(sticks ignored; teleop via ROS2)" << std::endl;
         } catch (const std::exception& e) {
             std::cerr << "[ROS2 ERROR] Failed to initialize ROS2InputHandler: " << e.what() << std::endl;
             throw;
@@ -238,6 +256,20 @@ public:
     // Flag to trigger emergency stop (set internally on ROS2 errors/timeout)
     bool emergency_stop_ = false;
 
+    /**
+     * @brief Copy the 40-byte Unitree wireless-remote packet from LowState.
+     *
+     * Only Select and A are parsed in update(); analog sticks are not used.
+     */
+    void UpdateGamepadRemoteData(const uint8_t* buff, size_t size) {
+        if (buff == nullptr || size == 0) {
+            return;
+        }
+        size_t copy_size = std::min<size_t>(size, sizeof(gamepad_remote_.buff));
+        std::memcpy(gamepad_remote_.buff, buff, copy_size);
+        gamepad_remote_valid_ = true;
+    }
+
     // Override the update function from InputInterface
     // Reads from control goal buffer (updated by callback) and updates local state
     // 
@@ -283,6 +315,17 @@ public:
         start_control_ = false;
         stop_control_ = false;
         report_temperature_flag_ = false;
+        planner_emergency_stop_ = false;
+
+        update_gamepad_safety_buttons();
+        if (select_btn_.on_press) {
+            stop_control_ = true;
+            std::cout << "[ROS2] Gamepad Select - Emergency stop" << std::endl;
+        }
+        if (A_btn_.on_press) {
+            planner_emergency_stop_ = true;
+            std::cout << "[ROS2] Gamepad A - Planner halt (zero movement)" << std::endl;
+        }
 
         // Read keyboard input for emergency stop ('O'/'o' key)
         // This works in standalone mode; when managed by InterfaceManager, it's also handled there
@@ -801,6 +844,12 @@ public:
                     final_height = base_height;  // Pass actual height command
                 }
             }
+            if (planner_emergency_stop_) {
+                final_mode = static_cast<int>(LocomotionMode::IDLE);
+                final_movement = {0.0, 0.0, 0.0};
+                final_speed = -1.0f;
+                final_height = -1.0f;
+            }
 
             // Debug: Log final computed values being sent to planner
             if constexpr (DEBUG_LOGGING) {
@@ -886,6 +935,24 @@ private:
     bool start_control_ = false;   ///< Start control this frame.
     bool stop_control_ = false;    ///< Stop control this frame.
     bool report_temperature_flag_ = false;  ///< Report temperature this frame (F key).
+    bool planner_emergency_stop_ = false;  ///< Gamepad A: halt planner movement this frame.
+
+    // ------------------------------------------------------------------
+    // Wireless remote (safety keys only; filled by UpdateGamepadRemoteData)
+    // ------------------------------------------------------------------
+    unitree::common::REMOTE_DATA_RX gamepad_remote_{};
+    bool gamepad_remote_valid_ = false;
+    unitree::common::Button select_btn_;
+    unitree::common::Button A_btn_;
+
+    /// Edge-detect Select / A from the latest wireless_remote packet.
+    void update_gamepad_safety_buttons() {
+        if (!gamepad_remote_valid_) {
+            return;
+        }
+        select_btn_.update(gamepad_remote_.RF_RX.btn.components.select);
+        A_btn_.update(gamepad_remote_.RF_RX.btn.components.A);
+    }
 
     // ------------------------------------------------------------------
     // Teleop state (updated from control_goal_buffer_ in update())

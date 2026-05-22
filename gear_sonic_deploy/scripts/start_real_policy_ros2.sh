@@ -1,0 +1,1 @@
+bash deploy.sh --input-type keyboard real

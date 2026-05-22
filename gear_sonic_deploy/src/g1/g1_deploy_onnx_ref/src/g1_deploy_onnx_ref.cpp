@@ -3409,12 +3409,25 @@ class G1Deploy {
      */
     void Input() {
       if (operator_state.stop) { return; }
-      
+
+      const std::shared_ptr<const LowState_> low_state_data = low_state_buffer_.GetDataWithTime().data;
+
+#if HAS_ROS2
+      if (auto* ros2_handler = dynamic_cast<ROS2InputHandler*>(input_interface_.get())) {
+        if (low_state_data) {
+          ros2_handler->UpdateGamepadRemoteData(
+            &low_state_data->wireless_remote()[0], 40);
+        } else {
+          const uint8_t zeros[40] = {};
+          ros2_handler->UpdateGamepadRemoteData(zeros, 40);
+        }
+      }
+#endif
+
       // Update input interface (poll for new data)
       input_interface_->update();
       
       // Handle input using the interface - input handler updates everything directly
-      const std::shared_ptr<const LowState_> low_state_data = low_state_buffer_.GetDataWithTime().data;
       std::array<double, 4> current_quat = {0.0, 0.0, 0.0, 1.0};
       if(low_state_data) {
         current_quat = float_to_double<4>(low_state_data->imu_state().quaternion());
