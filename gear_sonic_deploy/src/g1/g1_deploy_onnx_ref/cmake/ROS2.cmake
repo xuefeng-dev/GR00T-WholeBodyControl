@@ -117,8 +117,10 @@ endfunction()
 add_ros2_test_executable(test_ros2 tests/test_ros2.cpp)
 add_ros2_test_executable(
   test_ros2_control_publisher tests/test_ros2_control_publisher.cpp)
+add_ros2_test_executable(
+  demo_ros2_control_publisher demo/demo_ros2_control_publisher.cpp)
 
-message(STATUS "✅ ROS2 test executables: test_ros2, test_ros2_control_publisher")
+message(STATUS "✅ ROS2 executables: test_ros2, test_ros2_control_publisher, demo_ros2_control_publisher")
 
 # =============================================================================
 # Test Configuration Files
