@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # Run clangd inside g1-deploy-dev so it sees the same toolchain/headers as the build.
+# Maps host gear_sonic_deploy paths to the container mount at /workspace/g1_deploy.
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HOST_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+CONTAINER_ROOT="/workspace/g1_deploy"
 
 CONTAINER="${G1_DEPLOY_CONTAINER:-g1-deploy-dev}"
 
@@ -27,4 +32,7 @@ if [[ -z "${CLANGD_BIN}" ]]; then
 fi
 
 # -i: forward host stdin to clangd (required for LSP over stdio).
-exec docker exec -i "$CONTAINER" "${CLANGD_BIN}" "$@"
+exec docker exec -i "$CONTAINER" "${CLANGD_BIN}" \
+  --path-mappings="${HOST_ROOT}=${CONTAINER_ROOT}" \
+  --compile-commands-dir="${CONTAINER_ROOT}/build" \
+  "$@"
