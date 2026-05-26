@@ -36,11 +36,18 @@ constexpr std::array<double, 14> kDefaultWristPose = {
     0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0,
 };
 
+/// 本 demo 用到的控制目标字段（经 PackControlGoal 打成 msgpack map）。
+/// 完整协议还包含 wrist_pose 等，见 ros2_input_handler.hpp 中的 ControlGoalMsg。
 struct ControlGoal {
+    /// 导航速度 [lin_vel_x, lin_vel_y, ang_vel_z]：前进/侧移 m/s，绕 z 角速度 rad/s。
     std::array<double, 3> navigate_cmd{0.0, 0.0, 0.0};
+    /// 期望基座高度（米），有效范围约 0.1–0.88；0.72–0.88 时配合 locomotion_mode 行走。
     double base_height = 0.78;
+    /// 步态档位：0=慢走，1=快走，2=跑（仅在 base_height ≥ 0.72 且有移动量时生效）。
     int locomotion_mode = 0;
+    /// ROS 时间戳（秒），供 g1_deploy 与其它组件对齐；建议用 node clock。
     double ros_timestamp = 0.0;
+    /// 边沿触发：true 时切换策略启停（翻转，非按住）。本 demo 默认不发，用终端 ']' 启动。
     bool toggle_policy_action = false;
 };
 
