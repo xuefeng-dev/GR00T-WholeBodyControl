@@ -1,1 +1,2 @@
-bash deploy.sh --input-type keyboard real
+bash ./scripts/setup_env.sh
+bash deploy.sh --input-type ros2 --ros2-policy-start gamepad  real

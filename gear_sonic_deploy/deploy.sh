@@ -209,6 +209,7 @@ show_usage() {
     echo "  --planner PATH          Set the planner model path (default: planner/example.onnx)"
     echo "  --motion-data PATH      Set the motion data path (default: reference/example_motion/)"
     echo "  --input-type TYPE       Set the input type (default: zmq_manager)"
+    echo "  --ros2-policy-start M   With --input-type ros2: keyboard|gamepad|ros2"
     echo "  --output-type TYPE      Set the output type (default: ros2)"
     echo "  --zmq-host HOST         Set the ZMQ host (default: localhost)"
     echo ""
@@ -249,6 +250,7 @@ OBS_CONFIG="$OBS_CONFIG_DEFAULT"
 PLANNER="$PLANNER_DEFAULT"
 MOTION_DATA="$MOTION_DATA_DEFAULT"
 INPUT_TYPE="$INPUT_TYPE_DEFAULT"
+ROS2_POLICY_START=""
 OUTPUT_TYPE="$OUTPUT_TYPE_DEFAULT"
 ZMQ_HOST="$ZMQ_HOST_DEFAULT"
 
@@ -297,6 +299,14 @@ while [[ $# -gt 0 ]]; do
                 exit 1
             fi
             INPUT_TYPE="$2"
+            shift 2
+            ;;
+        --ros2-policy-start)
+            if [[ -z "$2" ]]; then
+                echo -e "${RED}Error: --ros2-policy-start requires keyboard, gamepad, or ros2${NC}" >&2
+                exit 1
+            fi
+            ROS2_POLICY_START="$2"
             shift 2
             ;;
         --output-type)
@@ -513,6 +523,9 @@ echo -e "  Motion Data:        ${GREEN}$MOTION_DATA${NC}"
 echo -e "  Obs Config:         ${GREEN}$OBS_CONFIG${NC}"
 echo -e "  Planner:            ${GREEN}$PLANNER${NC}"
 echo -e "  Input Type:         ${GREEN}$INPUT_TYPE${NC}"
+if [[ -n "$ROS2_POLICY_START" ]]; then
+echo -e "  ROS2 Policy Start:  ${GREEN}$ROS2_POLICY_START${NC}"
+fi
 echo -e "  Output Type:        ${GREEN}$OUTPUT_TYPE${NC}"
 echo -e "  ZMQ Host:           ${GREEN}$ZMQ_HOST${NC}"
 if [[ -n "$EXTRA_ARGS" ]]; then
@@ -528,6 +541,9 @@ echo -e "${BLUE}    --obs-config $OBS_CONFIG \\${NC}"
 echo -e "${BLUE}    --encoder-file $CHECKPOINT_ENCODER \\${NC}"
 echo -e "${BLUE}    --planner-file $PLANNER \\${NC}"
 echo -e "${BLUE}    --input-type $INPUT_TYPE \\${NC}"
+if [[ -n "$ROS2_POLICY_START" ]]; then
+echo -e "${BLUE}    --ros2-policy-start $ROS2_POLICY_START \\${NC}"
+fi
 echo -e "${BLUE}    --output-type $OUTPUT_TYPE \\${NC}"
 echo -e "${BLUE}    --zmq-host $ZMQ_HOST${NC}"
 if [[ -n "$EXTRA_ARGS" ]]; then
@@ -551,6 +567,11 @@ if [[ "$confirm" =~ ^[Yy]$ ]] || [[ -z "$confirm" ]]; then
     echo -e "${GREEN}🚀 Starting deployment...${NC}"
     echo ""
     
+    ROS2_START_ARGS=()
+    if [[ -n "$ROS2_POLICY_START" ]]; then
+        ROS2_START_ARGS=(--ros2-policy-start "$ROS2_POLICY_START")
+    fi
+
     # Build the command with optional extra args
     if [[ -n "$EXTRA_ARGS" ]]; then
         just run g1_deploy_onnx_ref "$TARGET" "$CHECKPOINT_DECODER" "$MOTION_DATA" \
@@ -558,6 +579,7 @@ if [[ "$confirm" =~ ^[Yy]$ ]] || [[ -z "$confirm" ]]; then
             --encoder-file "$CHECKPOINT_ENCODER" \
             --planner-file "$PLANNER" \
             --input-type "$INPUT_TYPE" \
+            "${ROS2_START_ARGS[@]}" \
             --output-type "$OUTPUT_TYPE" \
             --zmq-host "$ZMQ_HOST" \
             $EXTRA_ARGS
@@ -567,6 +589,7 @@ if [[ "$confirm" =~ ^[Yy]$ ]] || [[ -z "$confirm" ]]; then
             --encoder-file "$CHECKPOINT_ENCODER" \
             --planner-file "$PLANNER" \
             --input-type "$INPUT_TYPE" \
+            "${ROS2_START_ARGS[@]}" \
             --output-type "$OUTPUT_TYPE" \
             --zmq-host "$ZMQ_HOST"
     fi

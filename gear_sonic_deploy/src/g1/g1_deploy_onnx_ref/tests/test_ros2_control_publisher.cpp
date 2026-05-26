@@ -15,10 +15,8 @@
  *
  * Terminals (sim):
  *   1. python gear_sonic/scripts/run_sim_loop.py
- *   2. ./scripts/start_sim_policy_ros2.sh   -> wait "Init Done", keep running
- *   3. ./target/release/test_ros2_control_publisher --wait-sec 3
- *
- * Manual start alternative: press ']' in g1_deploy terminal (no toggle in test).
+ *   2. ./scripts/start_sim_policy_ros2.sh   -> wait "Init Done", press ']'
+ *   3. ./target/release/test_ros2_control_publisher --skip-start-pulse --wait-sec 3
  */
 
 #ifdef HAS_ROS2
@@ -59,7 +57,7 @@ struct TestConfig {
     double wait_sec = 5.0;
     double settle_sec = 2.0;  // after start pulse, before locomotion phases
     double phase_sec = 5.0;
-    bool skip_start_pulse = false;
+    bool skip_start_pulse = true;  // default: start with ']' in g1_deploy
 };
 
 std::vector<uint8_t> PackControlGoal(
@@ -139,9 +137,9 @@ void PrintUsage() {
         << "  --wait-sec SEC       Wait before publishing (default: 5)\n"
         << "  --settle-sec SEC     Pause after start pulse (default: 2)\n"
         << "  --phase-sec SEC      Per walk/turn/run/idle phase (default: 5)\n"
-        << "  --skip-start-pulse   Do not send toggle (use g1_deploy ']' instead)\n"
+        << "  --send-start-pulse   Send toggle_policy_action once (legacy)\n"
         << "\n"
-        << "toggle_policy_action is sent ONCE only (edge toggle).\n"
+        << "Default: no toggle; press ']' in g1_deploy (start_sim_policy_ros2.sh).\n"
         << "Topic: " << kTopic << "\n";
 }
 
@@ -155,6 +153,8 @@ int ParseArgs(int argc, char** argv, TestConfig& cfg) {
             cfg.phase_sec = std::atof(argv[++i]);
         } else if (std::strcmp(argv[i], "--skip-start-pulse") == 0) {
             cfg.skip_start_pulse = true;
+        } else if (std::strcmp(argv[i], "--send-start-pulse") == 0) {
+            cfg.skip_start_pulse = false;
         } else if (std::strcmp(argv[i], "-h") == 0 ||
                    std::strcmp(argv[i], "--help") == 0) {
             PrintUsage();

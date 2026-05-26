@@ -33,14 +33,23 @@
  *   0.50 – 0.72         | SQUAT (static)
  *   0.10 – 0.50         | KNEEL (static)
  *
- * ## Wireless Remote (safety only)
+ * ## Policy start (local, not via ROS)
  *
- * While teleop commands come from ROS 2, the Unitree wireless remote is still
- * read from `LowState::wireless_remote` for **safety keys only** (sticks are
- * ignored to avoid fighting `navigate_cmd`):
+ * Teleop (`navigate_cmd`, etc.) comes from ROS 2. Starting the policy is local:
+ *
+ *   `--ros2-policy-start` | Action
+ *   --------------------|------------------------------------------
+ *   `keyboard` (sim)    | Press `]` in the g1_deploy terminal
+ *   `gamepad` (real)    | Press **Start** on the Unitree wireless remote
+ *   `ros2`              | Send `toggle_policy_action: true` once in a goal msg
+ *
+ * ## Wireless Remote
+ *
+ * Sticks are ignored (teleop via ROS). Buttons:
  *
  *   Button  | Action
  *   --------|--------------------------------------------------
+ *   Start   | Start policy (`--ros2-policy-start gamepad` only)
  *   Select  | Full emergency stop (`operator_state.stop`)
  *   A       | Planner halt (IDLE, zero movement; control keeps running)
  *
@@ -127,6 +136,13 @@ struct ControlGoalMsg {
     bool valid = false;           ///< True once the message has been successfully parsed.
 };
 
+/// How to start/stop the policy when `--input-type ros2`.
+enum class Ros2PolicyStartMode {
+    Ros2Toggle,   ///< `toggle_policy_action` in ControlGoal messages
+    Keyboard,     ///< `]` start; O/o emergency stop
+    Gamepad,      ///< Start button; Select emergency stop
+};
+
 /**
  * @class ROS2InputHandler
  * @brief InputInterface driven by ROS 2 DDS messages (msgpack-serialised ControlGoalMsg).
@@ -151,8 +167,11 @@ public:
     static constexpr bool DEBUG_LOGGING = true;  // Set to false to disable debug logs
 
     // Constructor - initializes ROS2 node and subscribers
-    explicit ROS2InputHandler(bool use_ik_mode = true, const std::string& node_name = "g1_input_handler") 
-        : InputInterface() {
+    explicit ROS2InputHandler(
+        bool use_ik_mode = true,
+        const std::string& node_name = "g1_input_handler",
+        Ros2PolicyStartMode policy_start_mode = Ros2PolicyStartMode::Keyboard)
+        : InputInterface(), policy_start_mode_(policy_start_mode) {
         // Set terminal to non-blocking mode for keyboard input (emergency stop)
         tcgetattr(STDIN_FILENO, &old_termios_);
         struct termios new_termios = old_termios_;
@@ -182,8 +201,20 @@ public:
             if constexpr (DEBUG_LOGGING) {
                 std::cout << "[ROS2 DEBUG] Subscribed to topic: ControlPolicy/upper_body_pose" << std::endl;
             }
-            std::cout << "[ROS2] Gamepad safety: Select=full stop, A=planner halt "
-                         "(sticks ignored; teleop via ROS2)" << std::endl;
+            switch (policy_start_mode_) {
+                case Ros2PolicyStartMode::Keyboard:
+                    std::cout << "[ROS2] Policy start: press ']' in this terminal "
+                                 "(teleop via ROS2; O/o=emergency stop)" << std::endl;
+                    break;
+                case Ros2PolicyStartMode::Gamepad:
+                    std::cout << "[ROS2] Policy start: wireless remote Start "
+                                 "(teleop via ROS2; Select=stop, A=halt)" << std::endl;
+                    break;
+                case Ros2PolicyStartMode::Ros2Toggle:
+                    std::cout << "[ROS2] Policy start: toggle_policy_action in "
+                                 "ControlGoal (Select=stop, A=halt)" << std::endl;
+                    break;
+            }
         } catch (const std::exception& e) {
             std::cerr << "[ROS2 ERROR] Failed to initialize ROS2InputHandler: " << e.what() << std::endl;
             throw;
@@ -317,7 +348,7 @@ public:
         report_temperature_flag_ = false;
         planner_emergency_stop_ = false;
 
-        update_gamepad_safety_buttons();
+        update_gamepad_policy_buttons();
         if (select_btn_.on_press) {
             stop_control_ = true;
             std::cout << "[ROS2] Gamepad Select - Emergency stop" << std::endl;
@@ -326,12 +357,21 @@ public:
             planner_emergency_stop_ = true;
             std::cout << "[ROS2] Gamepad A - Planner halt (zero movement)" << std::endl;
         }
+        if (policy_start_mode_ == Ros2PolicyStartMode::Gamepad && start_btn_.on_press) {
+            start_control_ = true;
+            std::cout << "[ROS2] Gamepad Start - Start policy" << std::endl;
+        }
 
-        // Read keyboard input for emergency stop ('O'/'o' key)
-        // This works in standalone mode; when managed by InterfaceManager, it's also handled there
+        // Keyboard: ']' start (sim), O/o emergency stop, F temperature
         char ch;
         while (ReadStdinChar(ch)) {
             switch (ch) {
+                case ']':
+                    if (policy_start_mode_ == Ros2PolicyStartMode::Keyboard) {
+                        start_control_ = true;
+                        std::cout << "[ROS2] Keyboard ']' - Start policy" << std::endl;
+                    }
+                    break;
                 case 'o':
                 case 'O':
                     stop_control_ = true;
@@ -368,8 +408,9 @@ public:
             base_height_command_ = control_goal_buffer_.base_height_command;
             use_teleop_navigate_cmd_ = true;
             
-            // Handle toggle_policy_action (edge-triggered toggle between start/stop)
-            if (control_goal_buffer_.toggle_policy_action) {
+            // toggle_policy_action (ROS message) — only when policy_start_mode is Ros2Toggle
+            if (policy_start_mode_ == Ros2PolicyStartMode::Ros2Toggle &&
+                control_goal_buffer_.toggle_policy_action) {
                 // Toggle the control state
                 control_is_active_ = !control_is_active_;
                 
@@ -938,8 +979,10 @@ private:
     /// when false, use raw left_wrist / right_wrist matrices.
     bool use_ik_mode_ = false;
 
+    Ros2PolicyStartMode policy_start_mode_ = Ros2PolicyStartMode::Keyboard;
+
     // ------------------------------------------------------------------
-    // Control-toggle state
+    // Control-toggle state (Ros2Toggle mode only)
     // ------------------------------------------------------------------
     bool control_is_active_ = false;       ///< Tracks the toggle state for toggle_policy_action.
     int teleop_locomotion_mode_ = 0;  ///< 0 = SLOW_WALK, 1 = WALK, 2 = RUN.
@@ -959,12 +1002,14 @@ private:
     bool gamepad_remote_valid_ = false;
     unitree::common::Button select_btn_;
     unitree::common::Button A_btn_;
+    unitree::common::Button start_btn_;
 
-    /// Edge-detect Select / A from the latest wireless_remote packet.
-    void update_gamepad_safety_buttons() {
+    /// Edge-detect Start / Select / A from the latest wireless_remote packet.
+    void update_gamepad_policy_buttons() {
         if (!gamepad_remote_valid_) {
             return;
         }
+        start_btn_.update(gamepad_remote_.RF_RX.btn.components.start);
         select_btn_.update(gamepad_remote_.RF_RX.btn.components.select);
         A_btn_.update(gamepad_remote_.RF_RX.btn.components.A);
     }

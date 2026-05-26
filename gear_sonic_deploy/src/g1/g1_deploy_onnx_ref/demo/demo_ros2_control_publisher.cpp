@@ -6,16 +6,13 @@
  *   ControlPolicy/upper_body_pose  (std_msgs/msg/ByteMultiArray)
  * 载荷为 msgpack 编码的 map，见 PackControlGoal()。
  *
- * 重要：toggle_policy_action 是边沿触发（翻转），不是“按住运行”。
- * 每发一次 true 会在 START/STOP 之间切换；启动策略时只发一次即可。
+ * 策略启动：在 g1_deploy 终端按 ']'（start_sim_policy_ros2.sh），无需发 toggle。
+ * 本 demo 只发布 navigate_cmd 等运动指令。
  *
  * 运行前请先启动 g1_deploy（ROS2 模式），例如：
  *   ./scripts/start_sim_policy_ros2.sh
- * 再运行本 demo：
+ * 在 g1_deploy 终端按 ']' 启动策略后，再运行本 demo：
  *   ./target/release/demo_ros2_control_publisher
- *
- * g1_deploy 侧期望日志（启动时发一次 toggle）：
- *   [ROS2 DEBUG] toggle_policy_action: START control
  */
 
 #ifdef HAS_ROS2
@@ -112,16 +109,8 @@ int main(int argc, char** argv) {
 
     const double wait_sec = 3.0;
     std::cout << "等待 " << wait_sec << " s，请确认 g1_deploy 已就绪...\n";
+    std::cout << "请在 g1_deploy 终端按 ']' 启动策略，再等待运动指令...\n";
     std::this_thread::sleep_for(std::chrono::duration<double>(wait_sec));
-
-    // 发送一次 toggle，启动策略
-    Publish(pub, node, ControlGoal{
-        .navigate_cmd = {0.0, 0.0, 0.0},
-        .ros_timestamp = node->get_clock()->now().seconds(),
-        .toggle_policy_action = true,
-    });
-    std::cout << "已发送 toggle_policy_action（启动策略，仅一次）\n";
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
     // 持续发布前进指令
     const double walk_duration_sec = 8.0;
@@ -151,7 +140,7 @@ int main(int argc, char** argv) {
     }
 
     // 零速度收尾
-    std::cout << "\n发送 2 s 零速度后退出（停止策略可在 g1_deploy 按 ']' 或再发 toggle）\n";
+    std::cout << "\n发送 2 s 零速度后退出（紧急停止：g1_deploy 终端按 O/o）\n";
     const auto idle_end = std::chrono::steady_clock::now()
         + std::chrono::duration<double>(2.0);
     while (rclcpp::ok() && std::chrono::steady_clock::now() < idle_end) {

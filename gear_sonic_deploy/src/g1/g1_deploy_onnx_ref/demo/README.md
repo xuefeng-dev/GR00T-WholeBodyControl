@@ -27,10 +27,10 @@ python gear_sonic/scripts/run_sim_loop.py
 
 ```bash
 ./scripts/start_sim_policy_ros2.sh
-# 等待出现 Init Done
+# 等待出现 Init Done，在 g1_deploy 终端按 ']' 启动策略
 ```
 
-终端 3 — 本 demo：
+终端 3 — 本 demo（仅发布运动指令，不负责启动策略）：
 
 ```bash
 ./target/release/demo_ros2_control_publisher
@@ -53,11 +53,11 @@ python gear_sonic/scripts/run_sim_loop.py
 | `base_height_command` | `double` | 机身高度指令，常用约 `0.78` |
 | `locomotion_mode` | `int` | `0` 慢走，`1` 快走，`2` 跑 |
 | `ros_timestamp` | `double` | ROS 时间（秒），建议用节点时钟 |
-| `toggle_policy_action` | `bool` | **边沿触发**：发一次 `true` 在 START/STOP 间切换 |
+| `toggle_policy_action` | `bool` | 可选；仅 `--ros2-policy-start ros2` 时用于 START/STOP 切换 |
 
 可选字段（上肢/手）：`left_wrist_after_ik`、`right_wrist_after_ik`、`head_after_ik`、`left_hand_joint` 等，见 `include/input_interface/ros2_input_handler.hpp` 文件头注释。
 
-**注意**：`toggle_policy_action` 不要每帧发送，否则策略会立刻被再次 toggle 停止。
+**策略启动**（推荐）：仿真在 g1_deploy 终端按 `]`；真机按遥控器 **Start**（`start_real_policy_ros2.sh`）。无需在消息里发 `toggle_policy_action`。
 
 ### 输出（g1_deploy 发布，订阅示例）
 

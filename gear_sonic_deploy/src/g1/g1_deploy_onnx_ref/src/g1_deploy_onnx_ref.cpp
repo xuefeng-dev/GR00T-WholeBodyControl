@@ -2140,6 +2140,7 @@ class G1Deploy {
       std::string planner_motion_file_path = "",
       std::string policy_input_file_path = "",
       std::string input_type = "keyboard",
+      std::string ros2_policy_start = "keyboard",
       std::string output_type = "zmq",
       std::string record_input_file_path = "",
       std::string playback_input_file_path = "",
@@ -2497,9 +2498,19 @@ class G1Deploy {
       }
 #if HAS_ROS2
       else if (input_type == "ros2") {
-        // ROS2 input interface will be initialized without encoder mode parameter
-        input_interface_ = std::make_unique<ROS2InputHandler>(true, "g1_deploy_ros2_handler");
+        Ros2PolicyStartMode policy_start = Ros2PolicyStartMode::Keyboard;
+        if (ros2_policy_start == "gamepad") {
+          policy_start = Ros2PolicyStartMode::Gamepad;
+        } else if (ros2_policy_start == "ros2" || ros2_policy_start == "toggle") {
+          policy_start = Ros2PolicyStartMode::Ros2Toggle;
+        } else if (ros2_policy_start != "keyboard") {
+          std::cerr << "Warning: unknown --ros2-policy-start '" << ros2_policy_start
+                    << "', using keyboard" << std::endl;
+        }
+        input_interface_ = std::make_unique<ROS2InputHandler>(
+            true, "g1_deploy_ros2_handler", policy_start);
         std::cout << "Initialized ROS2 input interface" << std::endl;
+        std::cout << "  Policy start: " << ros2_policy_start << std::endl;
         std::cout << "  Initial encoder mode: " << initial_encoder_mode_ << std::endl;
       }
 #endif
@@ -4175,6 +4186,7 @@ int main(int argc, char const* argv[]) {
   std::string recordInputFile = "";
   std::string playbackInputFile = "";
   std::string inputType = "keyboard"; // Default to keyboard
+  std::string ros2PolicyStart = "keyboard"; // ROS2: keyboard | gamepad | ros2
   std::string outputType = "zmq"; // Default to zmq
   bool plannerFp16 = false;
   bool policyFp16 = false;
@@ -4263,6 +4275,25 @@ int main(int argc, char const* argv[]) {
         std::cerr << ", or ros2";
 #endif
         std::cerr << ")" << std::endl;
+        exit(1);
+      }
+    } else if (std::string(argv[i]) == "--ros2-policy-start") {
+      if (i + 1 < argc) {
+        ros2PolicyStart = argv[i + 1];
+        if (ros2PolicyStart != "keyboard" && ros2PolicyStart != "gamepad" &&
+            ros2PolicyStart != "ros2" && ros2PolicyStart != "toggle") {
+          std::cerr << "Error: --ros2-policy-start must be keyboard, gamepad, "
+                       "ros2, or toggle" << std::endl;
+          exit(1);
+        }
+        if (ros2PolicyStart == "toggle") {
+          ros2PolicyStart = "ros2";
+        }
+        std::cout << "[INFO] ROS2 policy start: " << ros2PolicyStart << std::endl;
+        i++;
+      } else {
+        std::cerr << "Error: --ros2-policy-start requires keyboard, gamepad, "
+                     "or ros2" << std::endl;
         exit(1);
       }
     } else if (std::string(argv[i]) == "--output-type") {
@@ -4435,6 +4466,7 @@ int main(int argc, char const* argv[]) {
     plannerMotionLogfile,
     policyInputLogfile,
     inputType,
+    ros2PolicyStart,
     outputType,
     recordInputFile,
     playbackInputFile,
