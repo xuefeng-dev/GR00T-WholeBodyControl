@@ -16,6 +16,13 @@ if ! docker inspect "$CONTAINER" >/dev/null 2>&1; then
   exit 1
 fi
 
+if [[ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER")" != "true" ]]; then
+  echo "error: container '$CONTAINER' is not running; start it first:" >&2
+  echo "  docker start $CONTAINER" >&2
+  echo "  or: gear_sonic_deploy/docker/run-ros2-dev.sh" >&2
+  exit 1
+fi
+
 CLANGD_BIN="$(
   docker exec "$CONTAINER" bash -lc '
     command -v clangd 2>/dev/null \
