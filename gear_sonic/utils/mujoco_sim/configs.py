@@ -342,5 +342,14 @@ class SimLoopConfig(BaseConfig):
     camera_port: int = 5555
     """Camera port for image publishing"""
 
+    ros2_pose_topic: str = "/mujoco/base_pose"
+    """ROS2 topic for publishing base pose."""
+
+    ros2_pose_frame_id: str = "world"
+    """Frame id used in PoseStamped header."""
+
+    ros2_pose_publish_hz: float = 50.0
+    """ROS2 pose publish frequency in Hz."""
+
     verbose: bool = False
     """Verbose output, override the base config verbose"""
