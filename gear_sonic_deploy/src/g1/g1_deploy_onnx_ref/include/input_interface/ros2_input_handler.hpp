@@ -51,14 +51,14 @@
  *   --------|--------------------------------------------------
  *   Start   | Start policy (`--ros2-policy-start gamepad` only)
  *   Select  | Full emergency stop (`operator_state.stop`)
- *   A       | Enter manual control (latched; ignores ROS2 locomotion)
+ *   A       | Toggle manual control (on/off; ignores ROS2 locomotion while on)
  *
  * ## Manual override (planner_emergency_stop_)
  *
- * Press gamepad **A** or keyboard **`[`** to latch manual control:
- *   - Simulation (`--ros2-policy-start keyboard`): SimpleKeyboard planner keys
- *   - Real robot (`--ros2-policy-start gamepad`): wireless remote planner sticks/buttons
- *   - ROS2 navigate_cmd / locomotion_mode are ignored until Select or O/o stop
+ * Press gamepad **A** or keyboard **`[`** to toggle manual control:
+ *   - First press: enter manual (keyboard or gamepad planner input)
+ *   - Second press: exit manual, restore ROS2 navigate_cmd / locomotion_mode
+ *   - Select or O/o: full emergency stop (also clears manual mode)
  *
  * Populate the buffer via `UpdateGamepadRemoteData()` from the input thread.
  *
@@ -212,11 +212,11 @@ public:
             switch (policy_start_mode_) {
                 case Ros2PolicyStartMode::Keyboard:
                     std::cout << "[ROS2] Policy start: press ']' in this terminal "
-                                 "(teleop via ROS2; `[`=manual, O/o=stop)" << std::endl;
+                                 "(teleop via ROS2; `[`=toggle manual, O/o=stop)" << std::endl;
                     break;
                 case Ros2PolicyStartMode::Gamepad:
                     std::cout << "[ROS2] Policy start: wireless remote Start "
-                                 "(teleop via ROS2; Select=stop, A=manual)" << std::endl;
+                                 "(teleop via ROS2; Select=stop, A=toggle manual)" << std::endl;
                     break;
                 case Ros2PolicyStartMode::Ros2Toggle:
                     std::cout << "[ROS2] Policy start: toggle_policy_action in "
@@ -368,7 +368,7 @@ public:
         // 仿真 keyboard 模式勿用 A（MuJoCo 无线遥控字节可能误触发）
         if (policy_start_mode_ == Ros2PolicyStartMode::Gamepad &&
             A_btn_.on_press) {
-            try_enter_manual_control("Gamepad A");
+            toggle_manual_control("Gamepad A");
         }
         if (policy_start_mode_ == Ros2PolicyStartMode::Gamepad && start_btn_.on_press) {
             start_control_ = true;
@@ -381,7 +381,7 @@ public:
             switch (ch) {
                 case '[':
                     if (policy_start_mode_ == Ros2PolicyStartMode::Keyboard) {
-                        try_enter_manual_control("Keyboard '['");
+                        toggle_manual_control("Keyboard '['");
                     }
                     break;
                 case ']':
@@ -1043,7 +1043,7 @@ private:
     bool start_control_ = false;   ///< Start control this frame.
     bool stop_control_ = false;    ///< Stop control this frame.
     bool report_temperature_flag_ = false;  ///< Report temperature this frame (F key).
-    /// 锁存：A / `[` 进入手动模式后保持，直到 Select 或 O/o 急停
+    /// A / `[` 切换：true = 手动模式，false = ROS2 导航控制
     bool planner_emergency_stop_ = false;
     bool manual_control_initialized_ = false;
     bool control_active_ = false;  ///< `]` / Start 已启动策略
@@ -1051,7 +1051,8 @@ private:
     std::unique_ptr<SimpleKeyboard> manual_keyboard_;       ///< 仿真手动控制
     std::unique_ptr<unitree::common::Gamepad> manual_gamepad_;  ///< 真机手动控制
 
-    void try_enter_manual_control(const char* source) {
+    /// 切换手动 / ROS2 导航模式（`[` 或遥控器 A，边沿触发）
+    void toggle_manual_control(const char* source) {
         if (!control_active_) {
             std::cout << "[ROS2] " << source
                       << " ignored: start policy first (press ']' in this terminal)"
@@ -1059,14 +1060,36 @@ private:
             return;
         }
         if (planner_emergency_stop_) {
-            std::cout << "[ROS2] Already in manual control (ROS2 locomotion disabled)"
-                      << std::endl;
-            return;
+            exit_manual_control(source);
+        } else {
+            planner_emergency_stop_ = true;
+            enter_manual_control();
+            std::cout << "[ROS2] " << source
+                      << " - Manual control ON (ROS2 locomotion disabled)" << std::endl;
         }
-        planner_emergency_stop_ = true;
-        enter_manual_control();
+    }
+
+    /// 退出手动模式，恢复 ROS2 导航
+    void exit_manual_control(const char* source) {
+        planner_emergency_stop_ = false;
+        manual_control_initialized_ = false;
+
+        if (uses_manual_keyboard() && manual_keyboard_) {
+            planner_facing_angle_ = manual_keyboard_->planner_facing_angle;
+        } else if (manual_gamepad_) {
+            planner_facing_angle_ = manual_gamepad_->planner_facing_angle;
+        }
+
+        if (received_control_goal_.load()) {
+            std::lock_guard<std::mutex> lock(control_goal_mutex_);
+            navigate_cmd_from_teleop_ = control_goal_buffer_.navigate_cmd;
+            base_height_command_ = control_goal_buffer_.base_height_command;
+            teleop_locomotion_mode_ = control_goal_buffer_.locomotion_mode;
+            use_teleop_navigate_cmd_ = true;
+        }
+
         std::cout << "[ROS2] " << source
-                  << " - Manual control (ROS2 locomotion disabled)" << std::endl;
+                  << " - Manual control OFF (ROS2 locomotion restored)" << std::endl;
     }
 
     /// 首次进入手动模式时同步 planner 状态
