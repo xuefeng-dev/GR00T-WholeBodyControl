@@ -51,7 +51,14 @@
  *   --------|--------------------------------------------------
  *   Start   | Start policy (`--ros2-policy-start gamepad` only)
  *   Select  | Full emergency stop (`operator_state.stop`)
- *   A       | Planner halt (IDLE, zero movement; control keeps running)
+ *   A       | Enter manual control (latched; ignores ROS2 locomotion)
+ *
+ * ## Manual override (planner_emergency_stop_)
+ *
+ * Press gamepad **A** or keyboard **`[`** to latch manual control:
+ *   - Simulation (`--ros2-policy-start keyboard`): SimpleKeyboard planner keys
+ *   - Real robot (`--ros2-policy-start gamepad`): wireless remote planner sticks/buttons
+ *   - ROS2 navigate_cmd / locomotion_mode are ignored until Select or O/o stop
  *
  * Populate the buffer via `UpdateGamepadRemoteData()` from the input thread.
  *
@@ -93,7 +100,8 @@
 #include <msgpack.hpp>
 
 #include "input_interface.hpp"
-#include "gamepad.hpp"  // REMOTE_DATA_RX, Button (safety keys only)
+#include "gamepad.hpp"  // REMOTE_DATA_RX, Button, Gamepad (manual override)
+#include "keyboard_handler.hpp"  // SimpleKeyboard (manual override, sim)
 #include "../math_utils.hpp"
 #include "../policy_parameters.hpp"  // For isaaclab_to_mujoco and default_angles
 #include <algorithm>
@@ -204,15 +212,15 @@ public:
             switch (policy_start_mode_) {
                 case Ros2PolicyStartMode::Keyboard:
                     std::cout << "[ROS2] Policy start: press ']' in this terminal "
-                                 "(teleop via ROS2; O/o=emergency stop)" << std::endl;
+                                 "(teleop via ROS2; `[`=manual, O/o=stop)" << std::endl;
                     break;
                 case Ros2PolicyStartMode::Gamepad:
                     std::cout << "[ROS2] Policy start: wireless remote Start "
-                                 "(teleop via ROS2; Select=stop, A=halt)" << std::endl;
+                                 "(teleop via ROS2; Select=stop, A=manual)" << std::endl;
                     break;
                 case Ros2PolicyStartMode::Ros2Toggle:
                     std::cout << "[ROS2] Policy start: toggle_policy_action in "
-                                 "ControlGoal (Select=stop, A=halt)" << std::endl;
+                                 "ControlGoal (Select=stop, A/`[=manual)" << std::endl;
                     break;
             }
         } catch (const std::exception& e) {
@@ -222,6 +230,9 @@ public:
         type_ = InputType::ROS2;
         has_vr_3point_control_ = true;
         use_ik_mode_ = use_ik_mode;
+
+        manual_keyboard_ = std::make_unique<SimpleKeyboard>(false);
+        manual_gamepad_ = std::make_unique<unitree::common::Gamepad>();
     }
 
     // Destructor
@@ -342,46 +353,71 @@ public:
             }
         }
         
-        // Reset input flags each frame
+        // Reset input flags each frame（planner_emergency_stop_ 为锁存，不在此清零）
         start_control_ = false;
         stop_control_ = false;
         report_temperature_flag_ = false;
-        planner_emergency_stop_ = false;
 
         update_gamepad_policy_buttons();
         if (select_btn_.on_press) {
             stop_control_ = true;
+            planner_emergency_stop_ = false;
+            manual_control_initialized_ = false;
             std::cout << "[ROS2] Gamepad Select - Emergency stop" << std::endl;
         }
-        if (A_btn_.on_press) {
-            planner_emergency_stop_ = true;
-            std::cout << "[ROS2] Gamepad A - Planner halt (zero movement)" << std::endl;
+        // 仿真 keyboard 模式勿用 A（MuJoCo 无线遥控字节可能误触发）
+        if (policy_start_mode_ == Ros2PolicyStartMode::Gamepad &&
+            A_btn_.on_press) {
+            try_enter_manual_control("Gamepad A");
         }
         if (policy_start_mode_ == Ros2PolicyStartMode::Gamepad && start_btn_.on_press) {
             start_control_ = true;
             std::cout << "[ROS2] Gamepad Start - Start policy" << std::endl;
         }
 
-        // Keyboard: ']' start (sim), O/o emergency stop, F temperature
+        // Keyboard: ']' start, '[' manual, O/o stop, F temperature
         char ch;
         while (ReadStdinChar(ch)) {
             switch (ch) {
+                case '[':
+                    if (policy_start_mode_ == Ros2PolicyStartMode::Keyboard) {
+                        try_enter_manual_control("Keyboard '['");
+                    }
+                    break;
                 case ']':
                     if (policy_start_mode_ == Ros2PolicyStartMode::Keyboard) {
                         start_control_ = true;
                         std::cout << "[ROS2] Keyboard ']' - Start policy" << std::endl;
+                    } else if (planner_emergency_stop_ && manual_keyboard_) {
+                        manual_keyboard_->PushStdinChar(ch);
                     }
                     break;
                 case 'o':
                 case 'O':
                     stop_control_ = true;
+                    planner_emergency_stop_ = false;
+                    manual_control_initialized_ = false;
                     std::cout << "[ROS2] Emergency stop triggered (O/o key pressed)" << std::endl;
                     break;
                 case 'f':
                 case 'F':
                     report_temperature_flag_ = true;
+                    if (planner_emergency_stop_ && manual_keyboard_) {
+                        manual_keyboard_->PushStdinChar(ch);
+                    }
+                    break;
+                default:
+                    if (planner_emergency_stop_ &&
+                        policy_start_mode_ == Ros2PolicyStartMode::Keyboard &&
+                        manual_keyboard_) {
+                        manual_keyboard_->PushStdinChar(ch);
+                    }
                     break;
             }
+        }
+
+        if (planner_emergency_stop_) {
+            update_manual_control();
         }
         
         // Check for control goal timeout (using steady_clock for monotonic timing)
@@ -403,13 +439,16 @@ public:
         // Read from control goal buffer (teleop commands from Python) - thread-safe
         if (received_control_goal_.load()) {
             std::lock_guard<std::mutex> lock(control_goal_mutex_);
-            // Update navigate_cmd and base_height_command from control goal
-            navigate_cmd_from_teleop_ = control_goal_buffer_.navigate_cmd;
-            base_height_command_ = control_goal_buffer_.base_height_command;
-            use_teleop_navigate_cmd_ = true;
+            // 手动模式下忽略 ROS2 底盘/导航控制，仍接收 VR/手部等上层数据
+            if (!planner_emergency_stop_) {
+                navigate_cmd_from_teleop_ = control_goal_buffer_.navigate_cmd;
+                base_height_command_ = control_goal_buffer_.base_height_command;
+                use_teleop_navigate_cmd_ = true;
+            }
             
             // toggle_policy_action (ROS message) — only when policy_start_mode is Ros2Toggle
-            if (policy_start_mode_ == Ros2PolicyStartMode::Ros2Toggle &&
+            if (!planner_emergency_stop_ &&
+                policy_start_mode_ == Ros2PolicyStartMode::Ros2Toggle &&
                 control_goal_buffer_.toggle_policy_action) {
                 // Toggle the control state
                 control_is_active_ = !control_is_active_;
@@ -431,7 +470,9 @@ public:
             }
             
             // Handle locomotion_mode (0 = slow walk, 1 = fast walk, 2 = run)
-            teleop_locomotion_mode_ = control_goal_buffer_.locomotion_mode;
+            if (!planner_emergency_stop_) {
+                teleop_locomotion_mode_ = control_goal_buffer_.locomotion_mode;
+            }
             
             if constexpr (DEBUG_LOGGING) {
                 static int prev_locomotion_mode = -1;
@@ -756,8 +797,23 @@ public:
         }
 
         // Handle control start/stop
-        if (this->stop_control_) { operator_state.stop = true; }
+        if (this->stop_control_) {
+            planner_emergency_stop_ = false;
+            manual_control_initialized_ = false;
+            control_active_ = false;
+            operator_state.stop = true;
+        }
         if (this->report_temperature_flag_) { report_temperature = true; }
+
+        // 手动模式：复用键盘/遥控器 planner 逻辑，不再走 ROS2 导航
+        if (planner_emergency_stop_) {
+            handle_manual_control(
+                motion_reader, current_motion, current_frame, operator_state,
+                reinitialize_heading, heading_state_buffer, has_planner,
+                planner_state, movement_state_buffer, current_motion_mutex,
+                report_temperature);
+            return;
+        }
 
         // Handle control start
         if (this->start_control_) { 
@@ -805,6 +861,7 @@ public:
                 std::lock_guard<std::mutex> lock(current_motion_mutex);
                 operator_state.play = true;
             }
+            control_active_ = true;
         }
 
         if (planner_state.enabled && planner_state.initialized) {
@@ -900,13 +957,6 @@ public:
                     final_height = base_height;  // Pass actual height command
                 }
             }
-            if (planner_emergency_stop_) {
-                final_mode = static_cast<int>(LocomotionMode::IDLE);
-                final_movement = {0.0, 0.0, 0.0};
-                final_speed = -1.0f;
-                final_height = -1.0f;
-            }
-
             // Debug: Log final computed values being sent to planner
             if constexpr (DEBUG_LOGGING) {
                 static int debug_counter = 0;
@@ -993,7 +1043,106 @@ private:
     bool start_control_ = false;   ///< Start control this frame.
     bool stop_control_ = false;    ///< Stop control this frame.
     bool report_temperature_flag_ = false;  ///< Report temperature this frame (F key).
-    bool planner_emergency_stop_ = false;  ///< Gamepad A: halt planner movement this frame.
+    /// 锁存：A / `[` 进入手动模式后保持，直到 Select 或 O/o 急停
+    bool planner_emergency_stop_ = false;
+    bool manual_control_initialized_ = false;
+    bool control_active_ = false;  ///< `]` / Start 已启动策略
+
+    std::unique_ptr<SimpleKeyboard> manual_keyboard_;       ///< 仿真手动控制
+    std::unique_ptr<unitree::common::Gamepad> manual_gamepad_;  ///< 真机手动控制
+
+    void try_enter_manual_control(const char* source) {
+        if (!control_active_) {
+            std::cout << "[ROS2] " << source
+                      << " ignored: start policy first (press ']' in this terminal)"
+                      << std::endl;
+            return;
+        }
+        if (planner_emergency_stop_) {
+            std::cout << "[ROS2] Already in manual control (ROS2 locomotion disabled)"
+                      << std::endl;
+            return;
+        }
+        planner_emergency_stop_ = true;
+        enter_manual_control();
+        std::cout << "[ROS2] " << source
+                  << " - Manual control (ROS2 locomotion disabled)" << std::endl;
+    }
+
+    /// 首次进入手动模式时同步 planner 状态
+    void enter_manual_control() {
+        if (manual_control_initialized_) {
+            return;
+        }
+        manual_control_initialized_ = true;
+        use_teleop_navigate_cmd_ = false;
+
+        if (uses_manual_keyboard()) {
+            manual_keyboard_->use_planner = true;
+            manual_keyboard_->planner_facing_angle = planner_facing_angle_;
+            manual_keyboard_->movement_momentum = 0.0;
+            std::cout << "[ROS2] Manual control: keyboard (WASD / QE / 1-8, see keyboard_handler)"
+                      << std::endl;
+        } else {
+            manual_gamepad_->use_planner = true;
+            manual_gamepad_->planner_facing_angle = planner_facing_angle_;
+            std::memcpy(
+                manual_gamepad_->gamepad_data.buff,
+                gamepad_remote_.buff,
+                sizeof(gamepad_remote_.buff));
+            std::cout << "[ROS2] Manual control: gamepad (sticks + planner buttons)"
+                      << std::endl;
+        }
+    }
+
+    bool uses_manual_keyboard() const {
+        return policy_start_mode_ == Ros2PolicyStartMode::Keyboard;
+    }
+
+    void update_manual_control() {
+        if (uses_manual_keyboard()) {
+            if (manual_keyboard_) {
+                manual_keyboard_->update_from_stdin_buffer();
+            }
+            return;
+        }
+        if (manual_gamepad_ && gamepad_remote_valid_) {
+            std::memcpy(
+                manual_gamepad_->gamepad_data.buff,
+                gamepad_remote_.buff,
+                sizeof(gamepad_remote_.buff));
+            manual_gamepad_->update();
+        }
+    }
+
+    void handle_manual_control(
+        MotionDataReader& motion_reader,
+        std::shared_ptr<const MotionSequence>& current_motion,
+        int& current_frame,
+        OperatorState& operator_state,
+        bool& reinitialize_heading,
+        DataBuffer<HeadingState>& heading_state_buffer,
+        bool has_planner,
+        PlannerState& planner_state,
+        DataBuffer<MovementState>& movement_state_buffer,
+        std::mutex& current_motion_mutex,
+        bool& report_temperature) {
+        if (uses_manual_keyboard() && manual_keyboard_) {
+            manual_keyboard_->handle_input(
+                motion_reader, current_motion, current_frame, operator_state,
+                reinitialize_heading, heading_state_buffer, has_planner,
+                planner_state, movement_state_buffer, current_motion_mutex,
+                report_temperature);
+            return;
+        }
+        if (manual_gamepad_) {
+            manual_gamepad_->handle_input(
+                motion_reader, current_motion, current_frame, operator_state,
+                reinitialize_heading, heading_state_buffer, has_planner,
+                planner_state, movement_state_buffer, current_motion_mutex,
+                report_temperature);
+        }
+    }
 
     // ------------------------------------------------------------------
     // Wireless remote (safety keys only; filled by UpdateGamepadRemoteData)
@@ -1398,6 +1547,21 @@ private:
      *    - ros_timestamp: double (ROS time in seconds for synchronization)
      *    - valid: bool (message validity flag)
      */
+};
+
+/**
+ * @class Ros2InputManager
+ * @brief ROS2 遥操作 + 本地手动接管（A / `[` 切换）。
+ *
+ * 与 ROS2InputHandler 相同；g1_deploy 在 `--input-type ros2` 时使用此类。
+ */
+class Ros2InputManager : public ROS2InputHandler {
+public:
+    explicit Ros2InputManager(
+        bool use_ik_mode = true,
+        const std::string& node_name = "g1_input_handler",
+        Ros2PolicyStartMode policy_start_mode = Ros2PolicyStartMode::Keyboard)
+        : ROS2InputHandler(use_ik_mode, node_name, policy_start_mode) {}
 };
 
 #endif // HAS_ROS2

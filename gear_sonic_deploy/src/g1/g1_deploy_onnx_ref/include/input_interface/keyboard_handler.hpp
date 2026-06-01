@@ -124,18 +124,30 @@ class SimpleKeyboard : public InputInterface {
      * individual key-presses can be read without waiting for Enter.
      * The original terminal settings are restored in the destructor.
      */
-    explicit SimpleKeyboard() : InputInterface() {
-      tcgetattr(STDIN_FILENO, &old_termios_);
-      struct termios new_termios = old_termios_;
-      new_termios.c_lflag &= ~(ICANON | ECHO);  // Disable line buffering and echo
-      tcsetattr(STDIN_FILENO, TCSANOW, &new_termios);
-      fcntl(STDIN_FILENO, F_SETFL, O_NONBLOCK);  // Non-blocking reads
+    explicit SimpleKeyboard(bool configure_stdin = true)
+        : InputInterface(), configure_stdin_(configure_stdin) {
+      if (configure_stdin_) {
+        tcgetattr(STDIN_FILENO, &old_termios_);
+        struct termios new_termios = old_termios_;
+        new_termios.c_lflag &= ~(ICANON | ECHO);
+        tcsetattr(STDIN_FILENO, TCSANOW, &new_termios);
+        fcntl(STDIN_FILENO, F_SETFL, O_NONBLOCK);
+      }
       type_ = InputType::KEYBOARD;
     }
 
     /// Restore original terminal settings on destruction.
     ~SimpleKeyboard() {
-      tcsetattr(STDIN_FILENO, TCSANOW, &old_termios_);
+      if (configure_stdin_) {
+        tcsetattr(STDIN_FILENO, TCSANOW, &old_termios_);
+      }
+    }
+
+    /// 仅处理 PushStdinChar 缓冲的按键（ROS2 手动模式委托用）。
+    void update_from_stdin_buffer() {
+      stdin_buffer_only_ = true;
+      update();
+      stdin_buffer_only_ = false;
     }
 
     // Flag to trigger safety reset in handle_input
@@ -174,7 +186,7 @@ class SimpleKeyboard : public InputInterface {
 
       // Read keyboard input (using shared buffered reading)
       char ch;
-      while (ReadStdinChar(ch)) {
+      while ((stdin_buffer_only_ ? ReadBufferedStdinChar(ch) : ReadStdinChar(ch))) {
         if (use_planner) {
             switch (ch) {
                 case 'r':
@@ -695,6 +707,8 @@ class SimpleKeyboard : public InputInterface {
 
 
   private:
+    bool configure_stdin_ = true;
+    bool stdin_buffer_only_ = false;
     struct termios old_termios_;
 };
 

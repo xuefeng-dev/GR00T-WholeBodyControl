@@ -425,6 +425,16 @@ public:
         stdin_buffer_.push(ch);
     }
 
+    /// 仅从 PushStdinChar 队列读取，不访问 stdin（委托输入用）。
+    bool ReadBufferedStdinChar(char& ch) {
+        if (stdin_buffer_.empty()) {
+            return false;
+        }
+        ch = stdin_buffer_.front();
+        stdin_buffer_.pop();
+        return true;
+    }
+
     // ------------------------------------------------------------------
     // Safety-reset mechanism  (used when switching active interfaces)
     // ------------------------------------------------------------------

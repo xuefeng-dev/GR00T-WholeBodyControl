@@ -220,3 +220,4 @@ models/
 sample_data/
 sonic_release/
 CMakeFiles/
+CMakeCache.txt

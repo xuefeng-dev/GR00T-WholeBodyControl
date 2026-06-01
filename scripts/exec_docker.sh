@@ -1,2 +1,2 @@
-docker start g1-deploy-dev
-docker exec -it g1-deploy-dev /bin/bash
+docker start $USER-g1-deploy-dev
+docker exec -it $USER-g1-deploy-dev /bin/bash

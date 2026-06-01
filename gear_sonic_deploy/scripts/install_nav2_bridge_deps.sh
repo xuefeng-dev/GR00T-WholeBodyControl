@@ -6,6 +6,6 @@ if ! command -v apt-get >/dev/null 2>&1; then
   exit 1
 fi
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq
-apt-get install -y -qq python3-msgpack python3-msgpack-numpy
+apt-get update -q
+apt-get install -y -q python3-msgpack python3-msgpack-numpy
 echo "Nav2 bridge Python deps installed (msgpack, msgpack-numpy)."

@@ -360,7 +360,7 @@ fi
 
 # Run the container with system-specific configuration
 docker run -it \
-    --name "$IMAGE_NAME" \
+    --name "$USER-$IMAGE_NAME" \
     --network host \
     $GPU_SETTINGS \
     -v "$(cd .. && pwd):/workspace/g1_deploy:rw" \

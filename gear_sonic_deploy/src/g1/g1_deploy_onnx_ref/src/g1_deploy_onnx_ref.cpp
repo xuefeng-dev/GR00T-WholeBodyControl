@@ -2507,9 +2507,9 @@ class G1Deploy {
           std::cerr << "Warning: unknown --ros2-policy-start '" << ros2_policy_start
                     << "', using keyboard" << std::endl;
         }
-        input_interface_ = std::make_unique<ROS2InputHandler>(
+        input_interface_ = std::make_unique<Ros2InputManager>(
             true, "g1_deploy_ros2_handler", policy_start);
-        std::cout << "Initialized ROS2 input interface" << std::endl;
+        std::cout << "Initialized ROS2 input interface (with manual override)" << std::endl;
         std::cout << "  Policy start: " << ros2_policy_start << std::endl;
         std::cout << "  Initial encoder mode: " << initial_encoder_mode_ << std::endl;
       }
@@ -3424,7 +3424,15 @@ class G1Deploy {
       const std::shared_ptr<const LowState_> low_state_data = low_state_buffer_.GetDataWithTime().data;
 
 #if HAS_ROS2
-      if (auto* ros2_handler = dynamic_cast<ROS2InputHandler*>(input_interface_.get())) {
+      if (auto* ros2_mgr = dynamic_cast<Ros2InputManager*>(input_interface_.get())) {
+        if (low_state_data) {
+          ros2_mgr->UpdateGamepadRemoteData(
+            &low_state_data->wireless_remote()[0], 40);
+        } else {
+          const uint8_t zeros[40] = {};
+          ros2_mgr->UpdateGamepadRemoteData(zeros, 40);
+        }
+      } else if (auto* ros2_handler = dynamic_cast<ROS2InputHandler*>(input_interface_.get())) {
         if (low_state_data) {
           ros2_handler->UpdateGamepadRemoteData(
             &low_state_data->wireless_remote()[0], 40);
