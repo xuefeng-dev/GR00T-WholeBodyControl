@@ -86,6 +86,7 @@ class Nav2CmdVelBridge(Node):
         self._vx = float(msg.linear.x)
         self._wz = float(msg.angular.z)
         self._last_cmd_vel_time = time.monotonic()
+        print(f"Received cmd_vel: {msg}")
 
     def _current_velocities(self) -> tuple[float, float, float]:
         if self._last_cmd_vel_time is None:
@@ -110,6 +111,7 @@ class Nav2CmdVelBridge(Node):
             "locomotion_mode": locomotion_mode,
             "ros_timestamp": self.get_clock().now().nanoseconds * 1e-9,
         }
+        # print(f"Publishing control goal: {payload}")
         self._publisher.publish(_pack_control_goal(payload))
 
 
