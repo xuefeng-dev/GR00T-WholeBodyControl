@@ -2,7 +2,7 @@
 # Configure CMake in the dev container and refresh compile_commands.json on the host mount.
 set -euo pipefail
 
-CONTAINER="${G1_DEPLOY_CONTAINER:-g1-deploy-dev}"
+CONTAINER="${G1_DEPLOY_CONTAINER:-${USER}-g1-deploy-dev}"
 BUILD_TYPE="${BUILD_TYPE:-Release}"
 
 if ! docker inspect "$CONTAINER" >/dev/null 2>&1; then
