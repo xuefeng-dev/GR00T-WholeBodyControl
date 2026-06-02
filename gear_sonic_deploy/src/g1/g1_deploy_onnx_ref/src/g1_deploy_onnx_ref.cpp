@@ -162,6 +162,28 @@ using namespace unitree_hg::msg::dds_;
  * Four real-time threads handle Input (100 Hz), Control (50 Hz),
  * Planner (10 Hz), and Command Writing (500 Hz).
  */
+
+namespace {
+
+// Unitree Init(domainId, iface) 仅内联网卡名，忽略 CYCLONEDDS_URI；优先用 dds_parameter.json。
+void InitUnitreeChannelFactory(const std::string& network_interface) {
+  const char* param_file = std::getenv("UNITREE_DDS_PARAMETER_FILE");
+  std::string path = param_file != nullptr ? param_file : "config/dds_parameter.json";
+
+  std::ifstream check(path);
+  if (check.good()) {
+    std::cout << "[INFO] Unitree DDS config: " << path << std::endl;
+    ChannelFactory::Instance()->Init(path);
+    return;
+  }
+
+  std::cout << "[WARN] Unitree DDS param not found: " << path
+            << ", fallback Init(0, " << network_interface << ")" << std::endl;
+  ChannelFactory::Instance()->Init(0, network_interface);
+}
+
+}  // namespace
+
 class G1Deploy {
   private:
     /// State machine for the control loop lifecycle.
@@ -2180,7 +2202,7 @@ class G1Deploy {
         planner_path(planner_file_path) {
       
       // Initialize ChannelFactory
-      ChannelFactory::Instance()->Init(0, networkInterface);
+      InitUnitreeChannelFactory(networkInterface);
 
       // Initialize Dex3 hands (ChannelFactory already initialized above)
       dex3_hands_.initialize("");

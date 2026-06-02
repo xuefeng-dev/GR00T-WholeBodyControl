@@ -389,6 +389,25 @@ CHECKPOINT_ENCODER="${CHECKPOINT}_encoder.onnx"
 # ZMQ host (set via command line or default)
 # ZMQ_HOST is already set from argument parsing above
 
+# Unitree SDK 内联 DDS 配置，须用 dds_parameter.json（CYCLONEDDS_URI 不生效）
+UNITREE_DDS_PARAMETER_FILE="${SCRIPT_DIR}/config/dds_parameter.json"
+write_unitree_dds_parameter() {
+    local iface="$1"
+    local escaped_iface="${iface//\\/\\\\}"
+    escaped_iface="${escaped_iface//\"/\\\"}"
+    cat > "$UNITREE_DDS_PARAMETER_FILE" <<EOF
+{
+  "DomainId": 0,
+  "Participant": {
+    "DomainId": 0,
+    "Config": "<?xml version=\\"1.0\\" encoding=\\"UTF-8\\"?><CycloneDDS xmlns=\\"https://cdds.io/config\\"><Domain Id=\\"any\\"><General><Interfaces><NetworkInterface name=\\"${escaped_iface}\\" priority=\\"default\\" multicast=\\"default\\"/></Interfaces></General><Discovery><MaxAutoParticipantIndex>120</MaxAutoParticipantIndex></Discovery></Domain></CycloneDDS>"
+  }
+}
+EOF
+    export UNITREE_DDS_PARAMETER_FILE
+}
+write_unitree_dds_parameter "$TARGET"
+
 # Additional flags for simulation mode
 EXTRA_ARGS=""
 if [[ "$ENV_TYPE" == "sim" ]]; then
@@ -565,6 +584,9 @@ read -p "$(echo -e ${GREEN}Proceed with deployment? [Y/n]: ${NC})" confirm
 if [[ "$confirm" =~ ^[Yy]$ ]] || [[ -z "$confirm" ]]; then
     echo ""
     echo -e "${GREEN}🚀 Starting deployment...${NC}"
+    if [[ -n "${UNITREE_DDS_PARAMETER_FILE:-}" ]]; then
+        echo -e "${CYAN}Unitree DDS: ${UNITREE_DDS_PARAMETER_FILE} (MaxAutoParticipantIndex=120)${NC}"
+    fi
     echo ""
     
     ROS2_START_ARGS=()
