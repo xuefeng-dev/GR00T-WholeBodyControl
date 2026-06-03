@@ -16,6 +16,8 @@ from gear_sonic.data.robot_model.robot_model import RobotModel
 
 ArgsConfig = SimLoopConfig
 
+PUB_OFFSET = [-13, 0, 0]
+
 
 class SimWrapper:
     def __init__(self, robot_model: RobotModel, env_name: str, config: Dict[str, Any], **kwargs):
@@ -71,9 +73,9 @@ class PosePublisherNode(Node):
         msg = PoseStamped()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = self.frame_id
-        msg.pose.position.x = float(pos[0])
-        msg.pose.position.y = float(pos[1])
-        msg.pose.position.z = float(pos[2])
+        msg.pose.position.x = float(pos[0]) + PUB_OFFSET[0]
+        msg.pose.position.y = float(pos[1]) + PUB_OFFSET[1]
+        msg.pose.position.z = float(pos[2]) + PUB_OFFSET[2]
         # MuJoCo quaternion is [w, x, y, z], ROS expects [x, y, z, w].
         msg.pose.orientation.x = float(quat_wxyz[1])
         msg.pose.orientation.y = float(quat_wxyz[2])

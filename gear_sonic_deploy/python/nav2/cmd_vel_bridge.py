@@ -45,10 +45,12 @@ def _linear_speed_mps(vx: float, vy: float) -> float:
 
 
 def _locomotion_mode_from_speed(speed_mps: float, threshold: float) -> int:
-    """线速度 ≤ threshold → 模式 1（走）；严格高于 threshold → 模式 2（跑）。"""
-    if speed_mps > threshold:
-        return LOCOMOTION_MODE_RUN
-    return LOCOMOTION_MODE_WALK
+    if speed_mps <= 0.8:
+        return 0
+    elif speed_mps <= 1.5:
+        return 1
+    else:
+        return 2
 
 
 class Nav2CmdVelBridge(Node):
@@ -84,6 +86,7 @@ class Nav2CmdVelBridge(Node):
 
     def _on_cmd_vel(self, msg: Twist) -> None:
         self._vx = float(msg.linear.x)
+        self._vy = float(msg.linear.y)
         self._wz = float(msg.angular.z)
         self._last_cmd_vel_time = time.monotonic()
         print(f"Received cmd_vel: {msg}")
@@ -95,7 +98,7 @@ class Nav2CmdVelBridge(Node):
         if time.monotonic() - self._last_cmd_vel_time > CMD_VEL_TIMEOUT_SEC:
             return 0.0, 0.0, 0.0
 
-        return self._vx, 0.0, self._wz
+        return self._vx, self._vy, self._wz
 
     def _on_timer(self) -> None:
         vx, vy, wz = self._current_velocities()
