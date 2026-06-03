@@ -395,6 +395,7 @@ write_unitree_dds_parameter() {
     local iface="$1"
     local escaped_iface="${iface//\\/\\\\}"
     escaped_iface="${escaped_iface//\"/\\\"}"
+    mkdir -p "$(dirname "$UNITREE_DDS_PARAMETER_FILE")"
     cat > "$UNITREE_DDS_PARAMETER_FILE" <<EOF
 {
   "DomainId": 0,
