@@ -899,41 +899,29 @@ public:
                 
                 // Calculate movement magnitude
                 double movement_mag = std::sqrt(lin_vel_x * lin_vel_x + lin_vel_y * lin_vel_y);
-
-                double planner_moving_direction = planner_facing_angle_;
                 
                 // Determine locomotion mode based on base_height_command first
                 if (base_height >= 0.72f) {
                     // Height 0.72-0.88: Normal walking modes
                     if (movement_mag > 0.01f) {
-                        // Moving: use walk modes
-                        // Compute moving direction (same as gamepad logic)
-                        planner_moving_direction = std::atan2(lin_vel_y, lin_vel_x) + planner_moving_direction;
-                        
-                        // Bin the moving direction to 8 evenly spaced directions and get corresponding speed
-                        auto [binned_angle, direction_speed] = bin_angle_to_8_directions(planner_moving_direction);
-                        planner_moving_direction = binned_angle;
-                        
-                        // Compute normalized movement direction from binned angle
-                        final_movement[0] = std::cos(planner_moving_direction);
-                        final_movement[1] = std::sin(planner_moving_direction);
+                        // navigate_cmd 为机体坐标系线速度：连续方向，不做 8 档量化（适配 Nav2）
+                        const double vel_angle_body = std::atan2(lin_vel_y, lin_vel_x);
+                        const double move_angle_world =
+                            planner_facing_angle_ + vel_angle_body;
+                        final_movement[0] = std::cos(move_angle_world);
+                        final_movement[1] = std::sin(move_angle_world);
                         final_movement[2] = 0.0f;
                         
                         if (teleop_locomotion_mode_ == 2) {
-                            // Run: scale speed from navigate magnitude (1.5–3.0 m/s)
                             final_mode = static_cast<int>(LocomotionMode::RUN);
-                            const double run_mag =
-                                std::min(movement_mag, 1.0);
-                            final_speed = 1.5 + 1.5 * run_mag;
                         } else if (teleop_locomotion_mode_ == 1) {
-                            // Normal walk mode: default speed (-1)
                             final_mode = static_cast<int>(LocomotionMode::WALK);
-                            final_speed = -1.0f;
                         } else {
-                            // Slow walk mode: speed varies by direction
                             final_mode = static_cast<int>(LocomotionMode::SLOW_WALK);
-                            final_speed = direction_speed;
                         }
+                        // 三种模式均按 cmd_vel 线速度模长线性映射 target_vel（与 cmd_vel_bridge 分档一致）
+                        final_speed = target_vel_from_navigate_mag(
+                            movement_mag, teleop_locomotion_mode_);
                     } else {
                         // No movement: idle
                         final_mode = static_cast<int>(LocomotionMode::IDLE);
@@ -1424,61 +1412,42 @@ private:
     }
     
     /**
-     * @brief Quantise an angle to the nearest 45° bin and return a direction-dependent speed.
+     * @brief 将 navigate_cmd 线速度模长线性映射为 planner target_vel。
      *
-     * The 8 bins: 0° (forward), ±45° (forward-diagonal), ±90° (lateral),
-     * ±135° (backward-diagonal), 180° (backward).
-     *
-     * @param angle  Input angle in radians (will be normalised to [−π, π]).
-     * @return {binned_angle, slow_walk_speed} – angle snapped to nearest bin,
-     *         and the corresponding speed for SLOW_WALK mode (faster forward,
-     *         slower backward).
+     * 与 cmd_vel_bridge 分档及手柄钳位一致：
+     *   locomotion_mode 0 (SLOW_WALK): mag [0, 0.8]   → vel [0.2, 0.8]
+     *   locomotion_mode 1 (WALK):      mag [0.8, 1.5] → vel [0.8, 1.5]
+     *   locomotion_mode 2 (RUN):       mag [1.5, 3.0] → vel [1.5, 3.0]
      */
-    std::pair<double, double> bin_angle_to_8_directions(double angle) {
-        constexpr double BIN_SIZE = M_PI / 4.0;  // 45 degrees in radians
-        constexpr int NUM_BINS = 8;
-        
-        // Normalize angle to [-π, π]
-        while (angle > M_PI) angle -= 2.0 * M_PI;
-        while (angle < -M_PI) angle += 2.0 * M_PI;
-        
-        // Find nearest bin
-        int bin_index = static_cast<int>(std::round(angle / BIN_SIZE));
-        
-        // Handle wrap-around (bin_index can be -4 to 4)
-        if (bin_index > 4) bin_index -= NUM_BINS;
-        if (bin_index < -4) bin_index += NUM_BINS;
-        
-        // Convert back to angle
-        double binned_angle = bin_index * BIN_SIZE;
-        
-        // Determine speed based on direction bin for slow walk mode
-        // Faster forward/lateral, slower backward
-        double slow_walk_speed;
-        switch (bin_index) {
-            case 0:   // Forward (0°)
-            case 1:   // Forward-right (45°)
-            case -1:  // Forward-left (-45°)
-                slow_walk_speed = 0.3f;
-                break;
-            case 2:   // Right (90°)
-            case -2:  // Left (-90°)
-                slow_walk_speed = 0.35f;
-                break;
-            case 3:   // Back-right (135°)
-            case -3:  // Back-left (-135°)
-                slow_walk_speed = 0.25f;
-                break;
-            case 4:   // Backward (180°)
-            case -4:  // Backward (-180°)
-                slow_walk_speed = 0.2f;
-                break;
-            default:
-                slow_walk_speed = 0.2f;  // Fallback
-                break;
+    static double target_vel_from_navigate_mag(
+        double movement_mag,
+        int teleop_locomotion_mode)
+    {
+        constexpr double kSlowMagMax = 0.8;
+        constexpr double kWalkMagMax = 1.5;
+        constexpr double kRunMagRef = 3.0;
+        constexpr double kSlowVelMin = 0.2;
+        constexpr double kSlowVelMax = 0.8;
+        constexpr double kWalkVelMin = 0.8;
+        constexpr double kWalkVelMax = 1.5;
+        constexpr double kRunVelMin = 1.5;
+        constexpr double kRunVelMax = 3.0;
+
+        if (teleop_locomotion_mode == 2) {
+            const double mag = std::clamp(movement_mag, kRunVelMin, kRunMagRef);
+            return kRunVelMin
+                + (kRunVelMax - kRunVelMin) * (mag - kRunVelMin)
+                    / (kRunMagRef - kRunVelMin);
         }
-        
-        return {binned_angle, slow_walk_speed};
+        if (teleop_locomotion_mode == 1) {
+            const double mag = std::clamp(movement_mag, kWalkVelMin, kWalkMagMax);
+            return kWalkVelMin
+                + (kWalkVelMax - kWalkVelMin) * (mag - kWalkVelMin)
+                    / (kWalkMagMax - kWalkVelMin);
+        }
+        const double mag = std::min(movement_mag, kSlowMagMax);
+        return kSlowVelMin
+            + (kSlowVelMax - kSlowVelMin) * mag / kSlowMagMax;
     }
 
     /**
