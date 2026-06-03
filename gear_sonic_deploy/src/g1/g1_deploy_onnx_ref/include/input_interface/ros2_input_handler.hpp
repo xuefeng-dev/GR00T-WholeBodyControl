@@ -363,6 +363,7 @@ public:
             stop_control_ = true;
             planner_emergency_stop_ = false;
             manual_control_initialized_ = false;
+            sync_facing_after_mode_switch_ = false;
             std::cout << "[ROS2] Gamepad Select - Emergency stop" << std::endl;
         }
         // 仿真 keyboard 模式勿用 A（MuJoCo 无线遥控字节可能误触发）
@@ -397,6 +398,7 @@ public:
                     stop_control_ = true;
                     planner_emergency_stop_ = false;
                     manual_control_initialized_ = false;
+                    sync_facing_after_mode_switch_ = false;
                     std::cout << "[ROS2] Emergency stop triggered (O/o key pressed)" << std::endl;
                     break;
                 case 'f':
@@ -800,10 +802,19 @@ public:
         if (this->stop_control_) {
             planner_emergency_stop_ = false;
             manual_control_initialized_ = false;
+            sync_facing_after_mode_switch_ = false;
             control_active_ = false;
             operator_state.stop = true;
         }
         if (this->report_temperature_flag_) { report_temperature = true; }
+
+        // 模式切换首帧：从 movement_state_buffer 对齐 yaw（进入/退出手动均适用）
+        if (sync_facing_after_mode_switch_ &&
+            has_planner && planner_state.enabled && planner_state.initialized) {
+            sync_planner_facing_from_buffer(movement_state_buffer);
+            sync_facing_after_mode_switch_ = false;
+            skip_ang_vel_after_mode_switch_ = true;
+        }
 
         // 手动模式：复用键盘/遥控器 planner 逻辑，不再走 ROS2 导航
         if (planner_emergency_stop_) {
@@ -887,15 +898,11 @@ public:
                 double ang_vel_z = navigate_cmd_from_teleop_[2];
                 
                 // Update facing angle based on angular velocity (similar to gamepad)
-                if (std::abs(ang_vel_z) > 0.01f) {
-                    // Negative sign matches gamepad behavior (positive ang_vel_z = turn left/CCW)
+                if (!skip_ang_vel_after_mode_switch_ &&
+                    std::abs(ang_vel_z) > 0.01f) {
+                    // 与 gamepad 一致：正 ang_vel_z = 逆时针
                     planner_facing_angle_ += ang_vel_z * 0.02;
                 }
-                
-                // Always compute facing direction from maintained angle (not from navigation topic)
-                final_facing_direction[0] = std::cos(planner_facing_angle_);
-                final_facing_direction[1] = std::sin(planner_facing_angle_);
-                final_facing_direction[2] = 0.0f;
                 
                 // Calculate movement magnitude
                 double movement_mag = std::sqrt(lin_vel_x * lin_vel_x + lin_vel_y * lin_vel_y);
@@ -945,6 +952,14 @@ public:
                     final_height = base_height;  // Pass actual height command
                 }
             }
+
+            // facing 始终由 planner_facing_angle_ 导出（含模式切换后 buffer 同步的角度）
+            // 不可依赖 use_teleop_navigate_cmd_：未收到 ControlGoal 时仍需保持连续 yaw
+            final_facing_direction[0] = std::cos(planner_facing_angle_);
+            final_facing_direction[1] = std::sin(planner_facing_angle_);
+            final_facing_direction[2] = 0.0f;
+            skip_ang_vel_after_mode_switch_ = false;
+
             // Debug: Log final computed values being sent to planner
             if constexpr (DEBUG_LOGGING) {
                 static int debug_counter = 0;
@@ -954,9 +969,9 @@ public:
                     if (use_teleop_navigate_cmd_) {
                         std::cout << "  Input navigate_cmd: [" << navigate_cmd_from_teleop_[0] << ", " 
                                   << navigate_cmd_from_teleop_[1] << ", " << navigate_cmd_from_teleop_[2] << "]" << std::endl;
-                        std::cout << "  Facing angle: " << planner_facing_angle_ << " rad (" 
-                                  << (planner_facing_angle_ * 180.0 / M_PI) << " deg)" << std::endl;
                     }
+                    std::cout << "  Facing angle: " << planner_facing_angle_ << " rad (" 
+                              << (planner_facing_angle_ * 180.0 / M_PI) << " deg)" << std::endl;
                     std::cout << "  Base height command: " << base_height_command_ 
                               << " (clamped: " << std::clamp(base_height_command_, 0.1, 0.88) << ")" << std::endl;
                     std::cout << "  Final mode: " << final_mode << " (0=idle, 1=slow, 2=walk, 3=run, 4=squat, 6=kneel)" << std::endl;
@@ -1035,9 +1050,42 @@ private:
     bool planner_emergency_stop_ = false;
     bool manual_control_initialized_ = false;
     bool control_active_ = false;  ///< `]` / Start 已启动策略
+    /// 模式切换后首帧在 handle_input 中从 movement_state_buffer 同步 yaw
+    bool sync_facing_after_mode_switch_ = false;
+    /// 模式切换首帧跳过 ang_vel_z 积分，避免覆盖刚同步的 facing
+    bool skip_ang_vel_after_mode_switch_ = false;
 
     std::unique_ptr<SimpleKeyboard> manual_keyboard_;       ///< 仿真手动控制
     std::unique_ptr<unitree::common::Gamepad> manual_gamepad_;  ///< 真机手动控制
+
+    /// 从 planner 当前 movement_state 同步 yaw，避免模式切换时 facing 跳变
+    void sync_planner_facing_from_buffer(
+        DataBuffer<MovementState>& movement_state_buffer) {
+        auto data = movement_state_buffer.GetDataWithTime().data;
+        if (!data) {
+            return;
+        }
+
+        const auto& facing = data->facing_direction;
+        double angle = std::atan2(facing[1], facing[0]);
+        planner_facing_angle_ = angle;
+
+        if (uses_manual_keyboard() && manual_keyboard_) {
+            manual_keyboard_->planner_facing_angle = angle;
+        } else if (manual_gamepad_) {
+            manual_gamepad_->planner_facing_angle = angle;
+            const auto& mov = data->movement_direction;
+            const double mov_mag = std::hypot(mov[0], mov[1]);
+            manual_gamepad_->planner_moving_direction =
+                mov_mag > 0.01 ? std::atan2(mov[1], mov[0]) : angle;
+        }
+
+        if constexpr (DEBUG_LOGGING) {
+            std::cout << "[ROS2] Synced planner facing from movement buffer: "
+                      << angle << " rad (" << (angle * 180.0 / M_PI)
+                      << " deg)" << std::endl;
+        }
+    }
 
     /// 切换手动 / ROS2 导航模式（`[` 或遥控器 A，边沿触发）
     void toggle_manual_control(const char* source) {
@@ -1055,18 +1103,14 @@ private:
             std::cout << "[ROS2] " << source
                       << " - Manual control ON (ROS2 locomotion disabled)" << std::endl;
         }
+        // 进入/退出均在 handle_input 首帧从 buffer 同步，保证 facing 连续
+        sync_facing_after_mode_switch_ = true;
     }
 
     /// 退出手动模式，恢复 ROS2 导航
     void exit_manual_control(const char* source) {
         planner_emergency_stop_ = false;
         manual_control_initialized_ = false;
-
-        if (uses_manual_keyboard() && manual_keyboard_) {
-            planner_facing_angle_ = manual_keyboard_->planner_facing_angle;
-        } else if (manual_gamepad_) {
-            planner_facing_angle_ = manual_gamepad_->planner_facing_angle;
-        }
 
         if (received_control_goal_.load()) {
             std::lock_guard<std::mutex> lock(control_goal_mutex_);
@@ -1090,13 +1134,11 @@ private:
 
         if (uses_manual_keyboard()) {
             manual_keyboard_->use_planner = true;
-            manual_keyboard_->planner_facing_angle = planner_facing_angle_;
             manual_keyboard_->movement_momentum = 0.0;
             std::cout << "[ROS2] Manual control: keyboard (WASD / QE / 1-8, see keyboard_handler)"
                       << std::endl;
         } else {
             manual_gamepad_->use_planner = true;
-            manual_gamepad_->planner_facing_angle = planner_facing_angle_;
             std::memcpy(
                 manual_gamepad_->gamepad_data.buff,
                 gamepad_remote_.buff,
