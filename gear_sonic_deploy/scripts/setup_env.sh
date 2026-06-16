@@ -13,7 +13,7 @@ if command -v jetson_clocks &> /dev/null; then
     else
         # Bare-metal Jetson - set max performance
         echo "🚀 Setting Jetson to max performance..."
-        sudo jetson_clocks 2>/dev/null || echo "⚠️  jetson_clocks failed (needs sudo)"
+        # sudo jetson_clocks 2>/dev/null || echo "⚠️  jetson_clocks failed (needs sudo)"
     fi
 fi
 
