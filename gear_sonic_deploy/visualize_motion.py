@@ -53,19 +53,15 @@ def key_call_back(keycode):
         print("not mapped", c)
 
 
-def load_anim_data(csv_path: str):
+def _load_deploy_motion_dir(motion_dir: str) -> dict:
+    joint_pos_path = os.path.join(motion_dir, "joint_pos.csv")
+    body_pos_path = os.path.join(motion_dir, "body_pos.csv")
+    body_quat_path = os.path.join(motion_dir, "body_quat.csv")
 
-    ret = []
-    if os.path.isdir(csv_path):
+    isaaclab_to_mujoco = [0,  3,  6,  9,  13, 17, 1,  4,  7,  10, 14, 18, 2,  5, 8,
+                          11, 15, 19, 21, 23, 25, 27, 12, 16, 20, 22, 24, 26, 28]
 
-        joint_pos_path = os.path.join(csv_path, "joint_pos.csv")
-        body_pos_path = os.path.join(csv_path, "body_pos.csv")
-        body_quat_path = os.path.join(csv_path, "body_quat.csv")
-
-        isaaclab_to_mujoco = [0,  3,  6,  9,  13, 17, 1,  4,  7,  10, 14, 18, 2,  5, 8,
-                              11, 15, 19, 21, 23, 25, 27, 12, 16, 20, 22, 24, 26, 28]
-
-        with open(joint_pos_path, mode="r", newline="") as joint_pos_file, open(body_pos_path, mode="r", newline="") as body_pos_file, open(body_quat_path, mode="r", newline="") as body_quat_file:
+    with open(joint_pos_path, mode="r", newline="") as joint_pos_file, open(body_pos_path, mode="r", newline="") as body_pos_file, open(body_quat_path, mode="r", newline="") as body_quat_file:
             firstRow = True
             joint_pos_rowlist = []
             body_pos_rowlist = []
@@ -83,11 +79,28 @@ def load_anim_data(csv_path: str):
                 body_pos_rowlist.append(body_pos_row)
                 body_quat_rowlist.append(body_quat_row)
 
-            ret.append({
-                "dof": np.array(joint_pos_rowlist)[:, isaaclab_to_mujoco],
-                "root_rot": np.array(body_quat_rowlist)[:, [0, 1, 2, 3]],  # [x, y, z, w]
-                "root_trans_offset": np.array(body_pos_rowlist)[:, :3],
-            })
+    return {
+        "dof": np.array(joint_pos_rowlist)[:, isaaclab_to_mujoco],
+        "root_rot": np.array(body_quat_rowlist)[:, [0, 1, 2, 3]],  # wxyz from body_quat.csv
+        "root_trans_offset": np.array(body_pos_rowlist)[:, :3],
+    }
+
+
+def load_anim_data(csv_path: str):
+
+    ret = []
+    if os.path.isdir(csv_path):
+        joint_pos_path = os.path.join(csv_path, "joint_pos.csv")
+        if not os.path.isfile(joint_pos_path):
+            for name in sorted(os.listdir(csv_path)):
+                subdir = os.path.join(csv_path, name)
+                if os.path.isdir(subdir) and os.path.isfile(
+                    os.path.join(subdir, "joint_pos.csv")
+                ):
+                    ret.append(_load_deploy_motion_dir(subdir))
+            return ret
+
+        ret.append(_load_deploy_motion_dir(csv_path))
 
     else:
         csv_data = []
