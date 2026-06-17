@@ -1,0 +1,45 @@
+---
+description: 统一使用根目录 .venv_sim 作为 Python 环境
+alwaysApply: true
+---
+
+# Python 环境：`.venv_sim`
+
+在本仓库中，Python 相关操作**默认使用**仓库根目录下的 `.venv_sim`。
+
+## 运行与安装
+
+- 激活：`source .venv_sim/bin/activate`（在仓库根目录执行）
+- 或直接调用：`.venv_sim/bin/python`、`.venv_sim/bin/pip`
+- 安装依赖时优先用该 venv，并尽量使用国内镜像源加速下载
+
+```bash
+# ✅ 推荐
+source .venv_sim/bin/activate
+python script.py
+pip install -i https://pypi.tuna.tsinghua.edu.cn/simple some-package
+
+# ✅ 无需 activate 时
+.venv_sim/bin/python script.py
+```
+
+```bash
+# ❌ 避免（除非用户明确要求）
+python3 script.py          # 系统 Python
+pip install some-package   # 未指定 venv
+python -m venv .venv       # 新建其他 venv
+```
+
+## 环境不存在时
+
+先提示用户创建，或运行：
+
+```bash
+bash install_scripts/install_mujoco_sim.sh
+```
+
+路径迁移后可用 `bash scripts/repair_venv_paths.sh .venv_sim` 修复。
+
+## 例外
+
+仓库另有专用 venv（如 `.venv_teleop`、`.venv_camera`），**仅当**任务明确涉及对应子系统（遥操作、相机服务等）时才使用；其余情况仍用 `.venv_sim`。
